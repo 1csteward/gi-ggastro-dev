@@ -1,3 +1,22 @@
 {
-    "fields": []
+    "fields": [
+        {
+            "default": "https://newstage.clabsportal.com:8020/webservice/api/datarecord/eRequest",
+            "name": "LimsPostUrl",
+            "options": "",
+            "type": "String"
+        },
+        {
+            "default": "csteward",
+            "name": "username",
+            "options": "",
+            "type": "String"
+        },
+        {
+            "default": "Flagstaffera25!",
+            "name": "password",
+            "options": "",
+            "type": "String"
+        }
+    ]
 }
