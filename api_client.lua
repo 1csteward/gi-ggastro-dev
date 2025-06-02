@@ -17,8 +17,7 @@
 --   - config_loader.lua (to manage base URL and auth string)
 -- ====================================================================
 
-local json = require "json"
-local net = require "net.http"
+local json = 'iguana.json'
 local config = require "config_loader"
 
 local api_client = {}
@@ -48,7 +47,7 @@ function api_client.sendToLims(data)
    }
 
    local success, response = pcall(function()
-      return net.post{
+      return iguana.http.post{
          url     = url,
          headers = headers,
          body    = json.serialize{data},
@@ -57,7 +56,7 @@ function api_client.sendToLims(data)
    end)
 
    if not success then
-      iguana.logError("❌ Failed to POST to LIMS API: " .. tostring(response))
+      iguana.logError("Failed to POST to LIMS API: " .. tostring(response))
       return {
          status = 500,
          body = "Internal error posting to LIMS",
@@ -66,9 +65,9 @@ function api_client.sendToLims(data)
    end
 
    if response.code >= 300 then
-      iguana.logWarning(string.format("⚠️ LIMS API returned status %d: %s", response.code, response.body or "No body"))
+      iguana.logWarning(string.format("LIMS API returned status %d: %s", response.code, response.body or "No body"))
    else
-      iguana.logInfo("✅ Successfully posted to LIMS API")
+      iguana.logInfo("Successfully posted to LIMS API")
    end
 
    return response

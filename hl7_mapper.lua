@@ -14,6 +14,7 @@
 -- ====================================================================
 
 local hl7_mapper ={}
+local accessor = require 'hl7_accessor' -- Unified HL7 path reader
 
 -- Direct Mappings: LIMS Field -> HL7 segment.field.component
 hl7_mapper.fieldMap = {
@@ -80,25 +81,13 @@ function hl7_mapper.getHL7Value(hl7, field)
    local path = hl7_mapper.fieldMap[field]
    if not path then
       iguana.logWarning(string.format("No mapping path defined for field: %s", field))
-         return nil
-      end
-
-   local seg, fieldNum, compNum = path:match("^(%u+).(%d+)%.?(%d*)$")
-   if not hl7[seg] then
-      iguana.logWarning(string.format("Missing segment %s in HL7 message.", seg))
       return nil
    end
-   
-   local val = hl7[seg][tonumber(fieldNum)]
-   if compNum ~= "" and val then
-      val = val[tonumber(compNum)]
-   end
-   
-   if not val then
+   local value = accessor.get(hl7, path)
+   if not value then
       iguana.logWarning(string.format("Value not found at path %s for field %s", path, field))
    end
-   
-   return val and val:S() or nil   
+   return value
 end
 
 -- Function: lookup
@@ -111,13 +100,13 @@ end
 function hl7_mapper.lookup(field, value)
    local map = hl7_mapper.lookups[field]
    if map then
-         if not map[value] then
-            iguana.logWarning(string.format("No lookup match for field %s value %s", field, value or "nil"))
-         end
-         return map[value] or value
+      if not map[value] then
+         iguana.logWarning(string.format("No lookup match for field %s value %s", field, value or "nil"))
       end
-      return value
+      return map[value] or value
    end
+   return value
+end
 
 -- Function: map
 -- Purpose: Convert parsed HL7 fields into a flat table suitable for LIMS API submission.

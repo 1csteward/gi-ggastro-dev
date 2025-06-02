@@ -1,39 +1,74 @@
--- ====================================================
+-- ====================================================================
 -- hl7_parser.lua
 -- Author: Conor Steward
--- Date Created: 5/30/25
+-- Date Created: 6/2/25
 -- Last Edit: 6/2/25
 --
 -- Purpose:
--- Ingests raw HL7 messages and returns a parsed HL7 tree.
--- Parses using Interfaceware's native hl7.parse module.
+-- Parses HL7 v2.x messages into a nested Lua table.
+-- Supports segments, fields, components (^), subcomponents (&), and repeats (~).
 --
 -- Notes:
--- - Assumes HL7 message is a valid string.
--- - Logs error and returns nil if parsing fails.
--- ====================================================
-
-local hl7 = require 'hl7'
+-- - Message structure: msg[segment][rep][field][rep][component][subcomponent]
+-- - Assumes default HL7 delimiters: | ^ ~ \ &
+-- ====================================================================
 
 local hl7_parser = {}
-   
--- Function: parse
--- Purpose: Safely parse a raw HL7 string into a Lua-accessible HL7 tree.
--- Params:
---   rawHl7 (string) - Raw HL7 message as string input
--- Returns:
---   table or nil - Parsed HL7 tree if successful; nil if parsing fails
-function hl7_parser.parse(rawHl7)
-   local success, parsed = pcall(function()
-         return hl7.parse{v= rawHl7}
-      end)
-   
-   if not success then
-      lguana.logError("Failed to parse HL7 message. Input may be malformed.")
-      return nil
+
+-- Utility function: split
+-- Splits a string into parts by a given delimiter.
+-- Input:
+--   str (string) - Original string
+--   delimiter (string) - Character to split by
+-- Output:
+--   table - List of substrings
+local function split(str, delimiter)
+   local result = {}
+   for match in (str .. delimiter):gmatch("(.-)" .. delimiter) do
+      table.insert(result, match)
    end
-   
-   return parsed
+   return result
+end
+
+-- Function: parse
+-- Converts raw HL7 string into nested Lua table structure.
+-- Handles segments, fields, components, subcomponents, and repetitions.
+-- Input:
+--   raw (string) - Raw HL7 message
+-- Output:
+--   table - Parsed HL7 structure
+function hl7_parser.parse(raw)
+   local msg = {}
+   local fieldSep = "|"
+   local componentSep = "^"
+   local repeatSep = "~"
+   local subcomponentSep = "&"
+
+   for segmentLine in raw:gmatch("[^\r\n]+") do
+      local rawFields = split(segmentLine, fieldSep)
+      local fields = {}
+
+      for fieldIndex, field in ipairs(rawFields) do
+         local fieldRepeats = {}
+
+         for rep in field:gmatch("[^" .. repeatSep .. "]+") do
+            local components = {}
+            for _, comp in ipairs(split(rep, componentSep)) do
+               local subcomponents = split(comp, subcomponentSep)
+               table.insert(components, subcomponents)
+            end
+            table.insert(fieldRepeats, components)
+         end
+
+         table.insert(fields, fieldRepeats)
+      end
+
+      local segName = rawFields[1]
+      if not msg[segName] then msg[segName] = {} end
+      table.insert(msg[segName], fields)
+   end
+
+   return msg
 end
 
 return hl7_parser

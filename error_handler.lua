@@ -17,7 +17,7 @@
 -- - Future: Can be expanded to notify, persist, or escalate errors.
 -- ====================================================================
 
-local json = require 'json'
+local json = 'iguana.json'
 
 local error_handler = {}
 

@@ -2,58 +2,61 @@
 -- test_runner.lua
 -- Author: Conor Steward
 -- Date Created: 6/2/25
+-- Last Edit: 6/2/25
 --
 -- Purpose:
--- Executes predefined test cases using embedded HL7 test message files.
--- Validates the HL7 ingestion pipeline from parsing through ACK/NACK generation.
+-- Executes predefined test cases against the HL7 ingestion pipeline.
+-- Each test injects raw HL7 data into the main pipeline for validation,
+-- parsing, mapping, and simulated ACK/NACK behavior.
 --
 -- Usage:
---   From the Iguana Translator development panel, call:
+--   From Iguana Translator panel, call:
 --     test_runner.testAll()
 --
 -- Notes:
--- - Test messages are stored in .lua files and return raw HL7 strings.
--- - Test results are logged to Iguana's log tab.
--- - Requires the main() function to accept raw HL7 input for testability.
+-- - Test message files are .lua modules returning raw HL7 strings.
+-- - main() must accept a string HL7 payload when testing.
+-- - Useful for verifying interface integrity during development.
 -- ====================================================================
 
 local test_runner = {}
 
+-- Internal helper: Run a single test case
+local function runTest(name, filePath)
+   local ok, raw = pcall(require, filePath)
+
+   if not ok or not raw then
+      iguana.logError("Failed to load test message file: " .. filePath)
+      return
+   end
+
+   iguana.logInfo("Running test: " .. name)
+
+   local passed, err = pcall(function()
+      main(raw)
+   end)
+
+   if passed then
+      iguana.logInfo("Test PASSED: " .. name)
+   else
+      iguana.logWarning("Test FAILED: " .. name .. " - Error: " .. tostring(err))
+   end
+end
+
 -- Function: testAll
 -- Purpose:
---   Runs a set of test cases defined in testRunner.tests.
---   Loads HL7 message content from .lua test files.
---   Passes each message to main() and captures success/failure.
---
--- Input: None (uses inline table of test cases)
--- Output: None (writes results to Iguana logs)
+--   Run all defined test cases.
+--   Each case is defined by { name, file }, where file is a test Lua module.
 function test_runner.testAll()
    local tests = {
       { name = "Valid ORM",     file = "test.orm_valid"     },
       { name = "Missing PID",   file = "test.missing_pid"   },
       { name = "Invalid MSH",   file = "test.invalid_msh"   },
+      -- Add more test cases as needed
    }
 
    for _, test in ipairs(tests) do
-      -- Load HL7 message from Lua module file
-      local ok, raw = pcall(require, test.file)
-
-      if ok and raw then
-         iguana.logInfo("Running test case: " .. test.name)
-
-         -- Execute test safely
-         local passed, err = pcall(function()
-            main(raw)
-         end)
-
-         if passed then
-            iguana.logInfo("Test PASSED: " .. test.name)
-         else
-            iguana.logWarning("Test FAILED: " .. test.name .. " - Error: " .. tostring(err))
-         end
-      else
-         iguana.logError("Unable to load test file: " .. test.file)
-      end
+      runTest(test.name, test.file)
    end
 end
 

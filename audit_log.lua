@@ -17,7 +17,7 @@
 -- - Can be extended to persist to file/db if needed
 -- ====================================================================
 
-local json = require 'json'
+local json = 'iguana.json'
 
 local audit_log = {}
 

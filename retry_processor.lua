@@ -21,7 +21,7 @@
 local retry_processor = {}
 
 local api_client = require 'api_client'
-local json = require 'json'
+local json = 'iguana.json'
 local config = require 'config_loader'
 
 -- Constants
@@ -44,7 +44,7 @@ function retry_processor.enqueue(data, reason)
    }
 
    queue.push{data = json.serialize(envelope), name = RETRY_QUEUE}
-   iguana.logInfo("🔁 Queued message for retry. Reason: " .. envelope.reason)
+   iguana.logInfo("Queued message for retry. Reason: " .. envelope.reason)
 end
 
 -- Function: processQueue
@@ -54,12 +54,12 @@ function retry_processor.processQueue()
    queue.pop(RETRY_QUEUE, function(raw)
       local envelope = json.parse(raw)
 
-      iguana.logInfo(string.format("🔄 Retry attempt #%d for message from %s", envelope.attempt, envelope.timestamp))
+      iguana.logInfo(string.format("Retry attempt #%d for message from %s", envelope.attempt, envelope.timestamp))
 
       local result = api_client.sendToLims(envelope.data)
 
       if result.status >= 200 and result.status < 300 then
-         iguana.logInfo("✅ Retry succeeded for message from " .. envelope.timestamp)
+         iguana.logInfo("Retry succeeded for message from " .. envelope.timestamp)
          return true -- Message processed successfully
       else
          envelope.attempt = envelope.attempt + 1
