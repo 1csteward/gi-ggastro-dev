@@ -1,22 +1,22 @@
 {
     "fields": [
         {
-            "default": "https://newstage.clabsportal.com:8020/webservice/api/datarecord/eRequest",
-            "name": "LimsPostUrl",
+            "default": "https://newstage.clabsportal.com:8020/webservice/api/datarecordlist/fields/eRequest",
+            "name": "lims_url",
             "options": "",
             "type": "String"
         },
         {
-            "default": "csteward",
-            "name": "username",
+            "default": "Basic Y3N0ZXdhcmQ6RmxhZ3N0YWZmZXJhMjUh",
+            "name": "basic_auth",
             "options": "",
             "type": "String"
         },
         {
-            "default": "Flagstaffera25!",
-            "name": "password",
+            "default": "10",
+            "name": "timeout",
             "options": "",
-            "type": "String"
+            "type": "Number"
         }
     ]
 }

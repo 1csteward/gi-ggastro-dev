@@ -1,81 +1,81 @@
---==================================================
+-- ====================================================================
 -- retry_processor.lua
--- Conor Steward 4/29/25
--- Purpose: Process previously failed payloads queued on disk and retry sending them to the API.
--- Issues: No known issues.
---==================================================
+-- Author: Conor Steward
+-- Date Created: 6/2/25
+-- Last Edit: 6/2/25
+--
+-- Purpose:
+-- Handles retry logic for failed LIMS API submissions.
+-- Uses Iguana queue to re-attempt sending on failure.
+--
+-- Usage:
+--   local retry = require 'retry_processor'
+--   retry.enqueue(data, reason)
+--   retry.processQueue()
+--
+-- Dependencies:
+--   - api_client.lua
+--   - config_loader.lua (for retry limits, etc.)
+-- ====================================================================
 
 local retry_processor = {}
+
+local api_client = require 'api_client'
 local json = require 'json'
-local api = require 'api_client'
-local audit = require 'audit_log'
-local error_handler = require 'error_handler'
+local config = require 'config_loader'
 
--- Path to where queued files are stored
-local queueDir = '/path/to/queue/folder/'  -- Same as queue_writer.lua
+-- Constants
+local MAX_RETRIES = tonumber(config.get("max_retries") or "3")
+local RETRY_QUEUE = "lims_retry_queue"
 
---==================================================
--- Process all queued JSON files
---==================================================
+-- Function: enqueue
+-- Purpose:
+--   Stores a failed payload in the retry queue with retry count and reason.
+--
+-- Input:
+--   data (table) - Mapped HL7 data to retry
+--   reason (string) - Optional reason for failure (logged for traceability)
+function retry_processor.enqueue(data, reason)
+   local envelope = {
+      attempt = 1,
+      timestamp = os.ts(),
+      data = data,
+      reason = reason or "Unspecified error"
+   }
+
+   queue.push{data = json.serialize(envelope), name = RETRY_QUEUE}
+   iguana.logInfo("🔁 Queued message for retry. Reason: " .. envelope.reason)
+end
+
+-- Function: processQueue
+-- Purpose:
+--   Dequeues messages, retries API submission, and requeues if needed.
 function retry_processor.processQueue()
-   local Success, ErrMsg = pcall(function()
-      local files = retry_processor.listQueuedFiles()
+   queue.pop(RETRY_QUEUE, function(raw)
+      local envelope = json.parse(raw)
 
-      -- Loops through queued files for retrying
-      for _, filename in ipairs(files) do
-         local fullPath = queueDir .. filename
-         
-         local file = io.open(fullPath, 'r')
-         if file then
-            local contents = file:read("*a")
-            file:close()
-            
-            -- Stores file contents in OrderPayLoad
-            local OrderPayload = json.parse{data = contents}
-            
-            -- Retries order
-            local ApiSuccess, ApiErr = pcall(function()
-               api.submitOrder(OrderPayload)
-            end)
+      iguana.logInfo(string.format("🔄 Retry attempt #%d for message from %s", envelope.attempt, envelope.timestamp))
 
-            if ApiSuccess then
-               os.remove(fullPath)
-               audit.logSuccess('Successfully resent queued order', filename)
-            else
-               error_handler.logFailure('Failed retry for queued order', ApiErr)
-               -- Note: Do NOT delete the file if still failing.
-            end
+      local result = api_client.sendToLims(envelope.data)
+
+      if result.status >= 200 and result.status < 300 then
+         iguana.logInfo("✅ Retry succeeded for message from " .. envelope.timestamp)
+         return true -- Message processed successfully
+      else
+         envelope.attempt = envelope.attempt + 1
+         envelope.reason = "Retry failed with status " .. tostring(result.status)
+
+         if envelope.attempt > MAX_RETRIES then
+            iguana.logError("Retry exhausted. Dropping message from " .. envelope.timestamp)
+            -- Optional: store to long-term archive or alert
+            return true -- Drop from queue
          else
-            error_handler.logFailure('Failed to read queued file', filename)
+            iguana.logWarning("Retry failed, requeuing (attempt " .. envelope.attempt .. ")")
+            queue.push{data = json.serialize(envelope), name = RETRY_QUEUE}
+            return true -- Remove original from queue
          end
       end
    end)
-
-   if not Success then
-      error_handler.logFailure('Fatal error during queue processing', ErrMsg)
-   end
-end
-
---==================================================
--- List all queued JSON files
--- @returns (table): List of file names
---==================================================
-function retry_processor.listQueuedFiles()
-   local files = {}
-   local p = io.popen('ls "'..queueDir..'"')
-
-   if p then
-      for file in p:lines() do
-         if file:match("%.json$") then
-            table.insert(files, file)
-         end
-      end
-      p:close()
-   else
-      error('Could not open queue directory.')
-   end
-
-   return files
 end
 
 return retry_processor

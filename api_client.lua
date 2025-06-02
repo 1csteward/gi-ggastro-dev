@@ -1,39 +1,74 @@
---==================================================
+-- ====================================================================
 -- api_client.lua
--- Purpose: Handles all HTTP interactions with Exemplar LIMS API.
---==================================================
+-- Author: Conor Steward
+-- Date Created: 6/2/25
+-- Last Edit: 6/2/25
+--
+-- Purpose:
+-- Encapsulates HTTP POST logic to send mapped HL7 data to the LIMS API.
+-- Supports Basic Auth via base64-encoded credentials in Authorization header.
+-- Can be extended to handle token-based auth later.
+--
+-- Usage:
+--   local api = require 'api_client'
+--   local response = api.sendToLims(mappedDataTable)
+--
+-- Dependencies:
+--   - config_loader.lua (to manage base URL and auth string)
+-- ====================================================================
 
-local http = require 'net.http'
-local json = require 'json'
-local config = require 'config_loader'
+local json = require "json"
+local net = require "net.http"
+local config = require "config_loader"
 
 local api_client = {}
 
---==================================================
--- Submit a lab order to Exemplar LIMS (eRequest endpoint)
--- @param orderTable (table): Lua table representing the order
--- @returns (string): API response body
---==================================================
-function api_client.submitOrder(orderTable)
-   local cfg = config.getLimsConfig()
+-- Function: sendToLims
+-- Purpose:
+--   Sends a JSON-formatted POST request to the LIMS API using Basic Auth.
+--   Logs any transport or API errors and returns a response object for handling in main.
+--
+-- Input:
+--   data (table) - A Lua table containing mapped HL7 values ready for submission
+--
+-- Output:
+--   table - Response table containing:
+--     - status (number): HTTP response code
+--     - body (string): Raw response body (if available)
+--     - error (any): Error detail if pcall fails
+function api_client.sendToLims(data)
+   local url = config.get("lims_url")
+   local auth = config.get("basic_auth")
+   local timeout = tonumber(config.get("timeout") or "10")
 
-   local body = json.serialize(orderTable)  -- or just {} if sending nothing
    local headers = {
-      ['Authorization'] = cfg.authHeader, -- 'Basic ZW5jb2RlZA==' format
-      ['Accept'] = 'application/json',
-      ['Content-Type'] = 'application/json'
+      ["Authorization"] = auth,
+      ["Content-Type"] = "application/json",
+      ["Accept"] = "application/json"
    }
 
-   local response, code = http.post {
-      url = cfg.url,
-      headers = headers,
-      body = body,
-      timeout = 5000,
-      live = true
-   }
+   local success, response = pcall(function()
+      return net.post{
+         url     = url,
+         headers = headers,
+         body    = json.serialize{data},
+         timeout = timeout
+      }
+   end)
 
-   if code ~= 200 and code ~= 201 then
-      error('API submission failed: HTTP ' .. code .. '\n' .. response)
+   if not success then
+      iguana.logError("❌ Failed to POST to LIMS API: " .. tostring(response))
+      return {
+         status = 500,
+         body = "Internal error posting to LIMS",
+         error = response
+      }
+   end
+
+   if response.code >= 300 then
+      iguana.logWarning(string.format("⚠️ LIMS API returned status %d: %s", response.code, response.body or "No body"))
+   else
+      iguana.logInfo("✅ Successfully posted to LIMS API")
    end
 
    return response
