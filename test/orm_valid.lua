@@ -1,0 +1,12 @@
+-- orm_valid.lua
+return [[
+MSH|^~\&|gGastro|SendingFacility||Castle|202506021430||ORM^O01|123456|P|2.3
+PID|1||P123456||Doe^Jane||19900101|F|||123 Main St^^Flagstaff^AZ^86001||5551234567|||123-45-6789
+PV1|1|O|ER||||1234567890^Clinician^Ned|||MED|||||||1234567890^Clinician^Ned
+IN1|1|Aetna|Aetna|||
+DG1|1||K22.70
+ORC|RE|10001|20001||CM||||202506021430|||1234567890^NPI
+OBR|1|10001|20001||TEST^Test Panel|||202506021430
+OBX|1|TX|ReportPrame||Positive
+NTE|1|L|Specimen comment here
+]]

@@ -5,15 +5,12 @@
 -- Last Edit: 6/2/25
 --
 -- Purpose:
--- Listens for HL7 messages over MLLP (from NAT'd gGastro connection)
--- Parses, validates, maps, and submits to LIMS API
--- Sends back an HL7 ACK or NACK based on processing results
+-- Handles HL7 message ingestion from gGastro via MLLP or test input.
+-- Parses, validates, maps, submits to LIMS, and returns HL7 ACK/NACK.
 --
 -- Notes:
--- Expects MLLP framing: 0x0B ... 0x1C0D
--- Dependencies: validator.lua, hl7_parser.lua, hl7_mapper.lua,
---                api_client.lua, retry_processor.lua, error_handler.lua,
---                audit_log.lua
+-- For testing: call processMessage(rawHL7) directly.
+-- For production: call main() to start LLP listener.
 -- =========================================================================
 
 -- Imports
@@ -25,10 +22,61 @@ local retry_processor = require 'retry_processor'
 local error_handler = require 'error_handler'
 local audit_log = require 'audit_log'
 
-function main()
-   local port = 5140  -- Ensure this matches firewall/NAT rules
-   local server = llp.listen{ port = port, timeout = 30 }
+-- Function: processMessage
+-- Purpose: Handles the full HL7 processing pipeline for one message.
+-- Input: raw (string) - Raw HL7 message string
+-- Output: string - HL7 ACK message string
+function processMessage(raw)
+   local parsed = hl7_parser.parse(raw)
+   if not parsed then error("Failed to parse HL7 message") end
 
+   local validationErrors = validator.basicValidate(parsed)
+   if #validationErrors > 0 then
+      error_handler.log("Validation failed", { errors = validationErrors }, "warning")
+      error("Message failed validation")
+   end
+
+   local mapped = hl7_mapper.map(parsed)
+   local response = api_client.sendToLims(mapped)
+
+   if response.status >= 300 then
+      retry_processor.enqueue(mapped, "Initial API submission failed")
+      audit_log.retry("Initial LIMS API submission failed", { status = response.status })
+   else
+      audit_log.success("Posted to LIMS", {
+         status = response.status,
+         patient = mapped.PatientFirstName .. " " .. mapped.PatientLastName
+      })
+   end
+
+   local ackMsg = hl7.message{}
+   ackMsg:appendSegment("MSH")
+   ackMsg.MSH[1] = "|"
+   ackMsg.MSH[2] = "^~\\&"
+   ackMsg.MSH[3] = parsed.MSH[5]
+   ackMsg.MSH[4] = parsed.MSH[6]
+   ackMsg.MSH[5] = parsed.MSH[3]
+   ackMsg.MSH[7] = os.date('%Y%m%d%H%M%S')
+   ackMsg.MSH[9][1] = "ACK"
+   ackMsg.MSH[10] = parsed.MSH[10]
+   ackMsg.MSH[11][1]= "P"
+   ackMsg.MSH[12] = "2.3"
+
+   ackMsg:appendSegment("MSA")
+   ackMsg.MSA[1] = "AA"
+   ackMsg.MSA[2] = parsed.MSH[10]
+
+   return ackMsg:S()
+end
+
+-- Function: main
+-- Purpose: LLP listener mode for receiving HL7 messages in production.
+-- Comment this out during test-driven development.
+function main()
+   -- Uncomment the block below for production mode (MLLP listener)
+   --[[
+   local port = 5140
+   local server = llp.listen{ port = port, timeout = 30 }
    iguana.logInfo("Listening for HL7 messages on port " .. port)
 
    while true do
@@ -41,43 +89,7 @@ function main()
       end
 
       local success, ack = pcall(function()
-         local parsed = hl7_parser.parse(hl7Raw)
-         if not parsed then error("Failed to parse HL7 message") end
-
-         local validationErrors = validator.basicValidate(parsed)
-         if #validationErrors > 0 then
-            error_handler.log("Validation failed", { errors = validationErrors }, "warning")
-            error("Message failed validation")
-         end
-
-         local mapped = hl7_mapper.map(parsed)
-         local response = api_client.sendToLims(mapped)
-
-         if response.status >= 300 then
-            retry_processor.enqueue(mapped, "Initial API submission failed")
-            audit_log.retry("Initial LIMS API submission failed", { status = response.status })
-         else
-            audit_log.success("Posted to LIMS", { status = response.status, patient = mapped.PatientFirstName .. " " .. mapped.PatientLastName })
-         end
-
-         local ackMsg = hl7.message{}
-         ackMsg:appendSegment("MSH")
-         ackMsg.MSH[1] = "|"
-         ackMsg.MSH[2] = "^~\\&"
-         ackMsg.MSH[3] = parsed.MSH[5] -- receiving app becomes sending
-         ackMsg.MSH[4] = parsed.MSH[6]
-         ackMsg.MSH[5] = parsed.MSH[3] -- sending app becomes receiving
-         ackMsg.MSH[7] = os.date('%Y%m%d%H%M%S')
-         ackMsg.MSH[9][1] = "ACK"
-         ackMsg.MSH[10] = parsed.MSH[10]
-         ackMsg.MSH[11][1]= "P"
-         ackMsg.MSH[12] = "2.3"
-
-         ackMsg:appendSegment("MSA")
-         ackMsg.MSA[1] = "AA"
-         ackMsg.MSA[2] = parsed.MSH[10]
-
-         return ackMsg:S()
+         return processMessage(hl7Raw)
       end)
 
       if success then
@@ -106,4 +118,10 @@ function main()
          iguana.logInfo("NACK sent due to processing error")
       end
    end
+   --]]
+
+   -- Uncomment the block below during testing to simulate test data input
+   -- Example:
+   -- local test = require 'test.test_runner'
+   -- test.testAll()
 end
