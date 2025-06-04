@@ -1,4 +1,5 @@
 require "hl7_accessor"
+
 -- ========================================================================
 -- main.lua
 -- Author: Conor Steward
@@ -28,17 +29,24 @@ local audit_log = require 'audit_log'
 -- Input: raw (string) - Raw HL7 message string
 -- Output: string - HL7 ACK message string
 function processMessage(raw)
+   iguana.logInfo("Starting HL7 processing pipeline")
+
    local parsed = hl7_parser.parse(raw)
    if not parsed then error("Failed to parse HL7 message") end
+   iguana.logInfo("Parsed message successfully. Message Control ID: " .. (parsed.MSH and parsed.MSH[1][10]:S() or "unknown"))
 
    local validationErrors = validator.basicValidate(parsed)
    if #validationErrors > 0 then
       error_handler.log("Validation failed", { errors = validationErrors }, "warning")
       error("Message failed validation")
    end
+   iguana.logInfo("Validation passed")
 
    local mapped = hl7_mapper.map(parsed)
+   iguana.logInfo("Mapped HL7 to LIMS fields:\n" .. json.serialize(mapped))
+
    local response = api_client.sendToLims(mapped)
+   iguana.logInfo("LIMS API Response Code: " .. tostring(response.status or "nil"))
 
    if response.status >= 300 then
       retry_processor.enqueue(mapped, "Initial API submission failed")
@@ -54,18 +62,18 @@ function processMessage(raw)
    ackMsg:appendSegment("MSH")
    ackMsg.MSH[1] = "|"
    ackMsg.MSH[2] = "^~\\&"
-   ackMsg.MSH[3] = parsed.MSH[5]
-   ackMsg.MSH[4] = parsed.MSH[6]
-   ackMsg.MSH[5] = parsed.MSH[3]
+   ackMsg.MSH[3] = parsed.MSH[1][5]
+   ackMsg.MSH[4] = parsed.MSH[1][6]
+   ackMsg.MSH[5] = parsed.MSH[1][3]
    ackMsg.MSH[7] = os.date('%Y%m%d%H%M%S')
    ackMsg.MSH[9][1] = "ACK"
-   ackMsg.MSH[10] = parsed.MSH[10]
-   ackMsg.MSH[11][1]= "P"
+   ackMsg.MSH[10] = parsed.MSH[1][10]
+   ackMsg.MSH[11][1] = "P"
    ackMsg.MSH[12] = "2.3"
 
    ackMsg:appendSegment("MSA")
    ackMsg.MSA[1] = "AA"
-   ackMsg.MSA[2] = parsed.MSH[10]
+   ackMsg.MSA[2] = parsed.MSH[1][10]
 
    return ackMsg:S()
 end
@@ -74,8 +82,7 @@ end
 -- Purpose: LLP listener mode for receiving HL7 messages in production.
 -- Comment this out during test-driven development.
 function main()
-   -- Uncomment the block below for production mode (MLLP listener)
-   --[[
+   --[[ -- Uncomment for live listening
    local port = 5140
    local server = llp.listen{ port = port, timeout = 30 }
    iguana.logInfo("Listening for HL7 messages on port " .. port)
@@ -121,8 +128,7 @@ function main()
    end
    --]]
 
-   -- Uncomment the block below during testing to simulate test data input
-   -- Example:
-   -- local test = require 'test.test_runner'
-   -- test.testAll()
+   -- Test mode
+   local test = require 'test.test_runner'
+   test.testAll()
 end

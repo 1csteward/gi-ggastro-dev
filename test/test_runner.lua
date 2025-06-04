@@ -20,6 +20,7 @@
 -- ====================================================================
 
 local test_runner = {}
+local processor = require 'main'
 
 -- Internal helper: Run a single test case
 local function runTest(name, filePath)
@@ -31,10 +32,10 @@ local function runTest(name, filePath)
    end
 
    iguana.logInfo("Running test: " .. name)
-
+   
    local passed, err = pcall(function()
-      main(raw)
-   end)
+         processor.processMessage(raw)
+      end)
 
    if passed then
       iguana.logInfo("Test PASSED: " .. name)
