@@ -1,5 +1,3 @@
-require "hl7_accessor"
-
 -- ========================================================================
 -- main.lua
 -- Author: Conor Steward
@@ -16,6 +14,7 @@ require "hl7_accessor"
 -- =========================================================================
 
 -- Imports
+require "hl7_accessor" -- Ensure accessor patching is loaded (for HL7 dot notation)
 local hl7_parser = require 'hl7_parser'
 local hl7_mapper = require 'hl7_mapper'
 local validator = require 'validator'
@@ -127,8 +126,10 @@ function main()
       end
    end
    --]]
-
-   -- Test mode
-   local test = require 'test.test_runner'
-   test.testAll()
 end
+
+-- For testing. Comment out once production is implimented.
+return {
+	processMessage = processMessage,
+   main = main
+}
