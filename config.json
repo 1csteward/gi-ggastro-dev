@@ -17,6 +17,18 @@
             "name": "timeout",
             "options": "",
             "type": "Number"
+        },
+        {
+            "default": "true",
+            "name": "test_mode",
+            "options": "",
+            "type": "Bool"
+        },
+        {
+            "default": "3",
+            "name": "max_retries",
+            "options": "",
+            "type": "Number"
         }
     ]
 }

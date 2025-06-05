@@ -17,8 +17,6 @@
 -- - Future: Can be expanded to notify, persist, or escalate errors.
 -- ====================================================================
 
-local json = 'iguana.json'
-
 local error_handler = {}
 
 -- Function: log
@@ -44,7 +42,7 @@ function error_handler.log(message, context, level)
    end
 
    local output = {
-      timestamp = os.ts(),
+      timestamp = os.time(),
       message = message,
       context = context or {}
    }

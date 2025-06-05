@@ -17,7 +17,6 @@
 
 local queue_writer = {}
 
-local json = require 'json'
 local config = require 'config_loader'
 
 -- Function: enqueue

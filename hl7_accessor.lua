@@ -9,7 +9,7 @@
 --
 -- Usage:
 --   local accessor = require 'hl7_accessor'
---   local value = accessor.get(msg, "PID.5.2.1")
+--   local value = accessor.get(msg, "PID.5.2.1") as example
 --
 -- Dependencies:
 --   - Works with hl7_parser.lua (structure: msg[SEG][rep][field][rep][component][subcomponent])

@@ -17,7 +17,6 @@
 --   - config_loader.lua (to manage base URL and auth string)
 -- ====================================================================
 
-local json = 'iguana.json'
 local config = require "config_loader"
 
 local api_client = {}

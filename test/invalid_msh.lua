@@ -1,6 +1,0 @@
--- invalid_msh.lua
-
-return [[
-BADMSH|NOSEPARATORS|gGastro|SomethingBroken
-PID|1||P123456||Doe^Jane||19900101|F
-]]

@@ -17,8 +17,6 @@
 -- - Can be extended to persist to file/db if needed
 -- ====================================================================
 
-local json = 'iguana.json'
-
 local audit_log = {}
 
 -- Function: success

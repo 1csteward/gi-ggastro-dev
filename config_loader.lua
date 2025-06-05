@@ -1,48 +1,47 @@
--- ====================================================================
+-- ================================================================
 -- config_loader.lua
 -- Author: Conor Steward
 -- Date Created: 6/2/25
--- Last Edit: 6/2/25
+-- Last Edit: 6/4/25
 --
 -- Purpose:
--- Loads static test configuration for Iguana X.
--- Replace with environment-driven config for production deployments.
+-- Provides centralized access to Iguana X Translator UI-defined custom
+-- configuration fields using the `component.fields()` API.
+-- Ensures all required keys are present and returns a config table.
 --
 -- Usage:
---   local config = require 'config_loader'
---   local url = config.get("lims_url")
+--   local config_loader = require 'config_loader'
+--   local config = config_loader.load({ 'lims_url', 'basic_auth', 'test_mode' })
 --
 -- Notes:
--- - Iguana X does not support iguana.channelConfig or iguana.json.
--- - This version uses hardcoded values for local simulation only.
--- ====================================================================
+-- `component.fields()` is Iguana X-native.
+-- test_mode is returned as a boolean.
+-- ================================================================
 
 local config_loader = {}
 
--- Static test config values
-local rawConfig = {
-   lims_url = "https://newstage.clabsportal.com:8020/webservice/api/datarecordlist/fields/eRequest",
-   basic_auth = "Basic Y3N0ZXdhcmQ6RmxhZ3N0YWZmZXJhMjUh",
-   timeout = "10",
-   max_retries = "3"
-}
+-- Loads and validates only the specified config keys
+function config_loader.load(requiredKeys)
+   local fields = component.fields()
+   local config = {}
 
--- Function: get
--- Purpose:
---   Retrieves a config value by key. Fails fast if missing or empty.
-function config_loader.get(key)
-   local value = rawConfig[key]
-   if value == nil or value == "" then
-      local msg = string.format("Missing required config value: '%s'", key)
-      iguana.logError(msg)
-      error(msg)
+   for _, key in ipairs(requiredKeys) do
+      local value = fields[key]
+      if value == nil or value == '' then
+         local msg = string.format("Missing required config value: '%s'", key)
+         iguana.logError(msg)
+         error(msg)
+      end
+
+      -- Coerce 'true'/'false' strings into booleans for known toggles
+      if key == "test_mode" then
+         config[key] = (value == "true")
+      else
+         config[key] = value
+      end
    end
-   return value
-end
 
--- Optional: dump all config (for debugging)
-function config_loader.all()
-   return rawConfig
+   return config
 end
 
 return config_loader
