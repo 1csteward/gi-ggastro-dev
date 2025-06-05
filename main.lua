@@ -18,14 +18,8 @@ local error_handler = require "error_handler"
 local audit_log = require "audit_log"
 
 -- Load configuration fields from component config.json (UI-managed)
-local fields = component.fields()
-config = {
-   lims_url     = fields.lims_url,
-   basic_auth   = fields.basic_auth,
-   timeout      = fields.timeout,
-   max_retries  = fields.max_retries,
-   test_mode    = fields.test_mode
-}
+local config_loader = require "config_loader"
+local config = config_loader.load({"lims_url", "basic_auth", "timeout", "max_retries"})
 
 -- Function: processMessage
 -- Purpose: Main HL7 → LIMS processing pipeline

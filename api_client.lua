@@ -17,7 +17,8 @@
 --   - config_loader.lua (to manage base URL and auth string)
 -- ====================================================================
 
-local config = require "config_loader"
+local config_loader = require "config_loader"
+local config = config_loader.load({"lims_url", "basic_auth", "timeout"})
 
 local api_client = {}
 
@@ -35,9 +36,9 @@ local api_client = {}
 --     - body (string): Raw response body (if available)
 --     - error (any): Error detail if pcall fails
 function api_client.sendToLims(data)
-   local url = config.get("lims_url")
-   local auth = config.get("basic_auth")
-   local timeout = tonumber(config.get("timeout") or "10")
+   local url = config.lims_url
+   local auth = config.basic_auth
+   local timeout = tonumber(config.timeout or "10")
 
    local headers = {
       ["Authorization"] = auth,
@@ -46,7 +47,7 @@ function api_client.sendToLims(data)
    }
 
    local success, response = pcall(function()
-      return iguana.http.post{
+      return net.http.post{
          url     = url,
          headers = headers,
          body    = json.serialize{data},
