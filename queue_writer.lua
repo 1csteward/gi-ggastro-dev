@@ -1,45 +1,48 @@
 -- ====================================================================
 -- queue_writer.lua
 -- Author: Conor Steward
--- Date Created: 6/2/25
+-- Updated: 6/16/25
 --
 -- Purpose:
--- Writes structured HL7 or mapped data into a designated Iguana queue.
--- Used to decouple message ingestion from downstream processing.
+--   Pushes structured HL7 or mapped LIMS data into the *current channel’s* Iguana queue.
+--   Designed for use in Translator components that defer processing to the next stage.
+--
+--   Note: This uses the built-in queue.push function which only works when
+--   the channel is running (not in test mode).
 --
 -- Usage:
---   local q = require 'queue_writer'
---   q.enqueue(data, "ingest_queue") -- Optional: specify queue name
+--   local queue_writer = require 'queue_writer'
+--   queue_writer.pushToQueue(data)
 --
--- Dependencies:
---   - config_loader.lua (for default queue name if not provided)
+-- Returns:
+--   A unique Message ID (format: YYYYMMDD-NNNNNNN)
 -- ====================================================================
 
 local queue_writer = {}
 
-local config = require 'config_loader'
-
--- Function: enqueue
--- Purpose:
---   Pushes data to an Iguana queue as serialized JSON with timestamp.
---
--- Input:
---   payload (table) - Structured HL7 or mapped LIMS data
---   queueName (string, optional) - Destination queue name (fallback to config or default)
-function queue_writer.enqueue(payload, queueName)
-   local name = queueName or config.get("ingest_queue") or "hl7_ingest_queue"
-
+-- ====================================================================
+-- Function: pushToQueue
+-- Purpose : Push data into the current channel's queue as JSON
+-- Input   : payload (table) - Any structured data (e.g., mapped HL7)
+-- Returns : string - Unique Iguana Message ID (or nil if failed in test)
+-- ====================================================================
+function queue_writer.pushToQueue(payload)
    local envelope = {
       timestamp = os.ts(),
       data = payload
    }
 
-   queue.push{
-      name = name,
-      data = json.serialize(envelope)
-   }
+   local ok, result = pcall(function()
+      return queue.push{ data = json.serialize(envelope) }
+   end)
 
-   iguana.logInfo("Message enqueued to '" .. name .. "'")
+   if ok then
+      iguana.logInfo("Successfully pushed message to queue. Message ID: " .. result)
+      return result
+   else
+      iguana.logWarning("Unable to push message to queue. Are you running in test mode?")
+      return nil
+   end
 end
 
 return queue_writer

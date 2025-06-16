@@ -23,6 +23,12 @@
             "name": "max_retries",
             "options": "",
             "type": "Number"
+        },
+        {
+            "default": "raw:HL7RawMessage",
+            "name": "data_type_name",
+            "options": "raw:HL7RawMessage, erequest:eRequest, attachment:attachment",
+            "type": "List"
         }
     ]
 }

@@ -1,81 +1,103 @@
 -- ====================================================================
 -- retry_processor.lua
 -- Author: Conor Steward
--- Date Created: 6/2/25
--- Last Edit: 6/4/25
+-- Updated: 6/16/25
 --
 -- Purpose:
--- Handles retry logic for failed LIMS API submissions.
--- Uses Iguana queue to re-attempt sending on failure.
+--   Handles retry logic for failed LIMS API submissions.
+--   Uses Iguana's native queue.push() to requeue for retry.
 --
 -- Usage:
 --   local retry = require 'retry_processor'
---   retry.enqueue(data, reason, config)
---   retry.processQueue(config)
+--   retry.handleRetry(payload, reason, config, currentAttempt)
 --
 -- Dependencies:
 --   - api_client.lua
---   - config_loader.lua (caller passes loaded config)
 -- ====================================================================
 
 local retry_processor = {}
-
 local api_client = require 'api_client'
 
--- Queue name constant
-local RETRY_QUEUE = "lims_retry_queue"
+-- ====================================================================
+-- Function: extractIdentifiers
+-- Purpose : Pulls sender and message ID from HL7 data
+-- Input   : data (table) - Mapped or parsed HL7 message
+-- Returns : sender (string), messageId (string)
+-- ====================================================================
+local function extractIdentifiers(data)
+   local msh = data.MSH or {}
+   local sender = msh[3] or msh[4] or "UnknownSender"
+   local msgId = msh[10] or "UnknownMsgID"
 
--- Function: enqueue
--- Purpose:
---   Stores a failed payload in the retry queue with retry count and reason.
--- Input:
---   data (table) - Mapped HL7 data to retry
---   reason (string) - Failure reason (for logs)
---   config (table) - Loaded config table passed in from main
-function retry_processor.enqueue(data, reason, config)
-   local envelope = {
-      attempt = 1,
-      timestamp = os.ts(),
-      data = data,
-      reason = reason or "Unspecified error"
-   }
+   -- If MSH fields are tables (from parsed HL7), get .1 component
+   if type(sender) == "table" then
+      sender = sender[1] or "UnknownSender"
+   end
+   if type(msgId) == "table" then
+      msgId = msgId[1] or "UnknownMsgID"
+   end
 
-   queue.push{data = json.serialize(envelope)}
-   iguana.logInfo("Queued message for retry. Reason: " .. envelope.reason)
+   return sender, msgId
 end
 
--- Function: processQueue
--- Purpose:
---   Processes queued retries and requeues if below max retry threshold.
--- Input:
---   config (table) - Loaded config table passed in from main
-function retry_processor.processQueue(config)
-   local maxRetries = tonumber(config.max_retries or 3)
+-- ====================================================================
+-- Function: handleRetry
+-- Purpose : Sends message or requeues if under retry threshold
+-- Input   :
+--   data (table)        - Mapped HL7 payload
+--   reason (string)     - Failure reason string
+--   config (table)      - Loaded config with retry settings
+--   attempt (number)    - Retry attempt number (default: 1)
+-- ====================================================================
+function retry_processor.handleRetry(data, reason, config, attempt)
+   local retryLimit = tonumber(config.max_retries or 3)
+   local currentAttempt = attempt or 1
 
-   queue.pop(RETRY_QUEUE, function(raw)
-      local envelope = json.parse(raw)
+   local sender, msgId = extractIdentifiers(data)
 
-      iguana.logInfo(string.format("Retry attempt #%d for message from %s", envelope.attempt, envelope.timestamp))
+   iguana.logInfo(string.format(
+      "Attempt #%d to resend message [Sender: %s, MessageControlID: %s]",
+      currentAttempt, sender, msgId
+   ))
 
-      local result = api_client.sendToLims(envelope.data)
+   local result = api_client.sendToLims(data)
 
-      if result.status >= 200 and result.status < 300 then
-         iguana.logInfo("Retry succeeded for message from " .. envelope.timestamp)
-         return true -- Processed successfully
-      else
-         envelope.attempt = envelope.attempt + 1
-         envelope.reason = "Retry failed with status " .. tostring(result.status)
+   if result.status >= 200 and result.status < 300 then
+      iguana.logInfo(string.format(
+         "Retry success after %d attempts [Sender: %s, MessageControlID: %s]",
+         currentAttempt, sender, msgId
+      ))
+      return true
+   end
 
-         if envelope.attempt > maxRetries then
-            iguana.logError("Retry exhausted. Dropping message from " .. envelope.timestamp)
-            return true -- Remove from queue
-         else
-            iguana.logWarning("Retry failed, requeuing (attempt " .. envelope.attempt .. ")")
-            queue.push{data = json.serialize(envelope), name = RETRY_QUEUE}
-            return true -- Remove old, re-add new
-         end
-      end
-   end)
+   local nextAttempt = currentAttempt + 1
+   local failureMsg = string.format(
+      "Retry failed with status %s [Sender: %s, MessageControlID: %s]",
+      tostring(result.status), sender, msgId
+   )
+
+   if nextAttempt > retryLimit then
+      iguana.logError(string.format(
+         "Retry limit reached (%d attempts). Dropping message. %s",
+         retryLimit, failureMsg
+      ))
+      return false
+   else
+      iguana.logWarning(string.format(
+         "%s. Requeuing for attempt #%d",
+         failureMsg, nextAttempt
+      ))
+
+      local envelope = {
+         attempt = nextAttempt,
+         timestamp = os.ts(),
+         data = data,
+         reason = reason or failureMsg
+      }
+
+      queue.push{ data = json.serialize(envelope) }
+      return true
+   end
 end
 
 return retry_processor

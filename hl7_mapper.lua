@@ -1,127 +1,126 @@
--- ====================================================================
+-- =============================================================================
 -- hl7_mapper.lua
 -- Author: Conor Steward
--- Date Created: 5/29/25
--- Last Edit: 6/2/25
+-- Updated: 6/16/25
 --
 -- Purpose:
--- Maps the parsed HL7 fields/subfields to LIMS tables and fields.
--- Lookups for LIMS tables.
--- Provides helpers for consistent mapping and transformation.
---
--- Notes:
--- Called by main. Relies on a parsed HL7 message structure.
--- ====================================================================
+--   Maps parsed HL7 ORM^O01 messages into a normalized VDB structure with multiple tables.
+--   Outputs structured data across eRequest, Patient, Physician, Organization, HL&Datum, and tissueCypherForm tables.
+-- =============================================================================
 
-local hl7_mapper ={}
-local accessor = require 'hl7_accessor' -- Unified HL7 path reader
+local hl7_mapper = {}
 
--- Direct Mappings: LIMS Field -> HL7 segment.field.component
-hl7_mapper.fieldMap = {
-	ExternalOrgId = "MSH.4", -- Sending Facility
-   ExternalEventId = "MSH.10", -- Message Control ID
-   
-   PatientFirstName = "PID.5.2", -- Patient First Name
-   PatientMiddleName = "PID.5.3", -- Patient Middle Name
-   PatientLastName = "PID.5.1", -- Patient Last Name
-   PatientDOB = "PID.7", -- Patient DOB: YYYYMMDD
-   PatientGender = "PID.8", -- Patient Gender: "Male" "Female" "-no value-"
-   PatientAddress1 = "PID.11.1", -- Patient Address
-   PatientAddress2 = "PID.11.2", -- Address cont.
-   PatientCity = "PID.11.3", -- Patient City
-   PatientStateProvinceSelector = "PID.11.4", -- Patient State: Two letter designation i.e AZ, AK, TX, etc.
-   PatientZipPostalCode = "PID.11.5", -- Patient Zip Code
-   PatientPhone = "PID.13.1", -- Patient Phone: xxxxxxxxx
-   AccountNumber = "PID.18", -- Patient Account Number
-   PatientSSN = "PID.19", -- Patient SSN: xxxxxxxxx
-   
-   TreatingClinicianNPINumber = "PV1.7.1", -- Treating ClinicianNPINumber: May not be mappable, if not must be inserted into treating clinician table
-   TreatingClinicianLastName = "PV1.7.2", -- Treating Clinician Last Name
-   TreatingClinicianFirstName = "PV1.7.3", -- Treating CLinician First Name
-   
-   PrimaryPhysicianNPINumber = "PV1.8.1", -- Primary Physisian NPI Number
-   PrimaryPhysicianLastName = "PV1.8.2", -- Primary Physisican Last Name
-   PrimaryPhysicianFirstName = "PV1.8.3", -- Primary Physician First Name
-   PrimaryPhysicianMiddleName = "PV1.8.4", -- Primary HPysician Middle Name
-   PrimaryPhysicianSuffix = "PV1.8.5", -- Primary Physician Suffix
-   
-   InsuranceName = "IN1.4.1", -- Insruance Company Name
-   InsurancePhone = "IN1.7.1", -- Insurance Phone Number
-   InsurancePolicyNumber = "IN1.36", -- Insurance Policy Number
-   
-   ICDCode1 = "DG1.3", -- IDC10 Code: Only 3 options avalible
-   
-   CollectionDate = "OBR.7", -- Specimen Collection Date
-   Comments = "OBR.39" -- Specimen collectors Comments
-}
-
--- Lookups for LIMS-Table compatability
+-- Lookup tables
 hl7_mapper.lookups = {
-   PatientGender = {
-   M = "Male",
-   F = "Female",
-   U = "-no value-"
-   },
-   
+   PatientGender = { M = "Male", F = "Female", U = "-no value-" },
    ICDCode1 = {
-   ["K22.70"] = "K22.70 Barrett's esophagus without dysplasia",
-   ["K22.710"] = "K22.710 Barrett's esophagus with low grade dysplasia",
-   ["K22.719"] = "K22.719 Barrett's esophagus with dysplasia, unspecified"
+      ["K22.70"] = "K22.70 Barrett's esophagus without dysplasia",
+      ["K22.710"] = "K22.710 Barrett's esophagus with low grade dysplasia",
+      ["K22.719"] = "K22.719 Barrett's esophagus with dysplasia, unspecified"
    }
 }
 
--- Function: getHL7Value
--- Purpose: Retrieve a value from the parsed HL7 table using a path from fieldMap.
--- Input:
---   hl7 (table) - Parsed HL7 message
---   field (string) - Logical LIMS field name
--- Output:
---   string or nil - HL7 value at mapped location
-function hl7_mapper.getHL7Value(hl7, field)
-   local path = hl7_mapper.fieldMap[field]
-   if not path then
-      iguana.logWarning(string.format("No mapping path defined for field: %s", field))
-      return nil
-   end
-   local value = accessor.get(hl7, path)
-   if not value then
-      iguana.logWarning(string.format("Value not found at path %s for field %s", path, field))
-   end
-   return value
+-- Utility: Safe getter
+local function get(v)
+   return v and v.S and v:S() or nil
 end
 
--- Function: lookup
--- Purpose: Translate HL7 field values to LIMS-compatible values using predefined tables.
--- Input:
---   field (string) - LIMS field name for which lookup may exist
---   value (string) - HL7 value to translate
--- Output:
---   string - Translated value if mapping exists; original value otherwise
-function hl7_mapper.lookup(field, value)
-   local map = hl7_mapper.lookups[field]
-   if map then
-      if not map[value] then
-         iguana.logWarning(string.format("No lookup match for field %s value %s", field, value or "nil"))
-      end
-      return map[value] or value
-   end
-   return value
+-- =============================================================================
+-- MAPPING FUNCTIONS PER TABLE
+-- =============================================================================
+
+function hl7_mapper.mapERequest(ORM)
+   local MSH, ORC, OBR, OBX = ORM.MSH, ORM.ORC, ORM.OBR, ORM.OBX
+   local T = {}
+
+   T.ExternalOrgId         = get(MSH[4][1])
+   T.ExternalEventId       = get(MSH[10])
+   T.OrderControl          = get(ORC[1])
+   T.OrderPlacerNumber     = get(ORC[2][1])
+   T.OrderingProviderFirst = get(ORC[12][3])
+   T.OrderingProviderLast  = get(ORC[12][2])
+   T.OrderTimestamp        = get(ORC[9][1])
+   T.TestCode              = get(OBR[4][1])
+   T.TestDescription       = get(OBR[4][2])
+   T.CollectionDate        = get(OBR[7][1])
+   T.SpecimenSource        = get(OBR[15][1])
+   T.CollectorsComments    = get(OBR[13][1])
+   T.ObservationValue      = get(OBX[5][1])
+   T.Units                 = get(OBX[6][1])
+   T.AbnormalFlag          = get(OBX[8])
+   T.Notes                 = get(OBX[3][2])
+
+   return T
 end
 
--- Function: map
--- Purpose: Convert parsed HL7 fields into a flat table suitable for LIMS API submission.
--- Input:
---   parsedHL7 (table) - Parsed HL7 tree
--- Output:
---   table - Key/value pairs matching LIMS schema
-function hl7_mapper.map(parsedHL7)
-   local output = {}
-   for fieldName, _ in pairs(hl7_mapper.fieldMap) do
-      local rawVal = hl7_mapper.getHL7Value(parsedHL7, fieldName)
-      local mappedVal = hl7_mapper.lookup(fieldName, rawVal)
-      output[fieldName] = mappedVal
-   end
-   return output
+function hl7_mapper.mapPatient(PID)
+   local T = {}
+   T.PatientFirstName      = get(PID[5][2])
+   T.PatientMiddleName     = get(PID[5][3])
+   T.PatientLastName       = get(PID[5][1][1])
+   T.PatientDOB            = get(PID[7])
+   T.PatientGender         = hl7_mapper.lookups.PatientGender[get(PID[8])] or get(PID[8])
+   T.PatientAddress1       = get(PID[11][1])
+   T.PatientAddress2       = get(PID[11][2])
+   T.PatientCity           = get(PID[11][3])
+   T.PatientStateProvinceSelector = get(PID[11][4])
+   T.PatientZipPostalCode  = get(PID[11][5])
+   T.PatientPhone          = get(PID[13][1])
+   T.AccountNumber         = get(PID[18][1])
+   T.PatientSSN            = get(PID[19])
+   return T
+end
+
+function hl7_mapper.mapPhysician(ORC, OBR)
+   local T = {}
+   T.TreatingClinicianNPINumber = get(ORC[12][1])
+   T.TreatingClinicianLastName  = get(ORC[12][2])
+   T.TreatingClinicianFirstName = get(ORC[12][3])
+   T.PrimaryPhysicianNPINumber  = get(OBR[16][1])
+   T.PrimaryPhysicianLastName   = get(OBR[16][2])
+   T.PrimaryPhysicianFirstName  = get(OBR[16][3])
+   T.PrimaryPhysicianMiddleName = get(OBR[16][4])
+   T.PrimaryPhysicianSuffix     = get(OBR[16][5])
+   return T
+end
+
+function hl7_mapper.mapOrganization(MSH)
+   local T = {}
+   T.SendingApp   = get(MSH[3][1])
+   T.SendingFac   = get(MSH[4][1])
+   T.ReceivingApp = get(MSH[5][1])
+   T.ReceivingFac = get(MSH[6][1])
+   return T
+end
+
+function hl7_mapper.mapHLDatum(OBX)
+   local T = {}
+   T.ObservationValue = get(OBX[5][1])
+   T.Units            = get(OBX[6][1])
+   T.AbnormalFlag     = get(OBX[8])
+   T.ObservationNotes = get(OBX[3][2])
+   return T
+end
+
+function hl7_mapper.mapTissueForm(NTE)
+   local T = {}
+   T.Notes = get(NTE[3])
+   return T
+end
+
+-- =============================================================================
+-- MAIN MAPPING FUNCTION
+-- =============================================================================
+
+function hl7_mapper.map(parsed)
+   local T = {}
+   T.eRequest           = { hl7_mapper.mapERequest(parsed) }
+   T.Patient            = { hl7_mapper.mapPatient(parsed.PID) }
+   T.Physician          = { hl7_mapper.mapPhysician(parsed.ORC, parsed.OBR) }
+   T.Organization       = { hl7_mapper.mapOrganization(parsed.MSH) }
+   T["HL&Datum"]        = { hl7_mapper.mapHLDatum(parsed.OBX) }
+   T.tissueCypherForm   = { hl7_mapper.mapTissueForm(parsed.NTE or {}) }
+   return T
 end
 
 return hl7_mapper
