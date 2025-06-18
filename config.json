@@ -1,13 +1,13 @@
 {
     "fields": [
         {
-            "default": "https://newstage.clabsportal.com:8020/webservice/api/datarecordlist/fields",
+            "default": redacted,
             "name": "lims_table_url",
             "options": "",
             "type": "String"
         },
         {
-            "default": "Basic Y3N0ZXdhcmQ6RmxhZ3N0YWZmZXJhMjUh",
+            "default": "Basic redacted",
             "name": "basic_auth",
             "options": "",
             "type": "String"
