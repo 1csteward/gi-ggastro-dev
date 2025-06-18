@@ -34,6 +34,7 @@ function config_loader.load(requiredKeys)
          iguana.logError(msg)
          error(msg)
       end
+      config[key] = value
    end
 
    return config

@@ -1,125 +1,129 @@
 -- ============================================================================
 -- main.lua
 -- Author: Conor Steward
--- Updated: 6/13/25
+-- Updated: 6/18/25
 --
 -- Purpose:
---   Entry point for HL7 messages received via From LLP channel.
---   - Sanitizes and validates HL7 string format.
---   - Parses HL7 message using a VMD file.
---   - Maps parsed message to a LIMS-compatible table using hl7_mapper.
---   - Sends both raw and mapped data to LIMS endpoints.
---   - Handles retries, error logging, and auditing.
+--   Ingest HL7 messages from a From LLP channel.
+--   - Normalizes HL7 input.
+--   - Parses with VMD.
+--   - Maps with hl7_mapper into VDB structure.
+--   - Sends primary table to main LIMS endpoint.
+--   - Sends supporting tables to LIMS table endpoint.
+--   - Handles retry logic and logging.
 -- ============================================================================
 
--- Dependencies
+-- Required modules
 local hl7_mapper      = require "hl7_mapper"
 local api_client      = require "api_client"
 local retry_processor = require "retry_processor"
+local queue_writer    = require "queue_writer"
 local config_loader   = require "config_loader"
 
--- Load required config fields
+-- Load config file values
 local config = config_loader.load({
-   "lims_url", "basic_auth", "timeout", "max_retries", "data_type_name"
+   "lims_table_url",
+   "basic_auth",
+   "timeout",
+   "max_retries",
+   "data_type_name"
 })
 
+-- Extract config values
+local data_type_name = config.data_type_name
+
 -- ============================================================================
--- Function: sanitizeHL7
--- Purpose : Normalize incoming HL7 string:
---           - Trim whitespace
---           - Normalize line endings to HL7 standard carriage returns (\r)
---           - Ensure message begins with MSH|
+-- normalizeHL7
+-- Cleans and validates the HL7 input string
 -- ============================================================================
-local function sanitizeHL7(raw)
-   local cleaned = raw:gsub("\r\n", "\r"):gsub("\n", "\r"):match("^%s*(.-)%s*$")
-   if not cleaned:match("^MSH|") then
-      error_handler.log("Invalid HL7 format: missing MSH segment", { raw = raw }, "error")
-      error("HL7 must start with MSH segment")
+local function normalizeHL7(raw)
+   local msg = raw:gsub("\r\n", "\r"):gsub("\n", "\r"):match("^%s*(.-)%s*$")
+   if not msg:match("^MSH|") then
+      iguana.logError("Invalid HL7 format: missing MSH segment")
+      error("HL7 must begin with MSH segment")
    end
-   return cleaned
+   return msg
 end
 
 -- ============================================================================
--- Function: extractHL7Metadata
--- Purpose : Extracts event ID and message type from the parsed HL7 MSH segment
--- Input   : msg - Parsed HL7 message (Lua table)
--- Output  : eventId (string), messageType (string)
+-- extractMetadata
+-- Grabs message control ID and message type from MSH
 -- ============================================================================
-local function extractHL7Metadata(msg)
-   local eventId = msg.MSH[1]["Message Control ID"] and msg.MSH[1]["Message Control ID"]:S() or util.guid()
-   local mt = msg.MSH[1]["Message Type"]
-   local messageType = (mt[1] and mt[1]:S() or "") .. "_" .. (mt[2] and mt[2]:S() or "UNKNOWN")
+local function extractMetadata(msg)
+   local eventId = msg.MSH[10] and msg.MSH[10]:S() or util.guid()
+   local messageType = (msg.MSH[9][1] and msg.MSH[9][1]:S() or "") .. "_" .. (msg.MSH[9][2] and msg.MSH[9][2]:S() or "UNKNOWN")
    return eventId, messageType
 end
 
 -- ============================================================================
--- Function: processMessage
--- Purpose : Core HL7 ingestion pipeline for single message
--- Input   : raw - Raw HL7 string
--- Output  : cleaned - Cleaned HL7 string for ACK response
+-- processMessage
+-- Handles full flow of parsing, mapping, and sending HL7 message
 -- ============================================================================
 local function processMessage(raw)
    iguana.logInfo("Starting HL7 message processing")
 
-   -- Step 1: Clean input HL7 string
-   local cleaned = sanitizeHL7(raw)
+   local cleaned = normalizeHL7(raw)
 
-   -- Step 2: Parse with VMD
-   local parsedMsg = hl7.parse{
-      vmd = "lab_orders.vmd",
+   local parsed = hl7.parse{
+      vmd  = "lab_orders.vmd",
       data = cleaned
    }
 
-   -- Step 3: Extract metadata for logging
-   local eventId, messageType = extractHL7Metadata(parsedMsg)
+   local eventId, messageType = extractMetadata(parsed)
+   local mapped = hl7_mapper.map(parsed)
 
-   -- Step 4: Map to flat LIMS-compatible table
-   local mapped = hl7_mapper.map(parsedMsg)
-
-   -- Step 5: Archive raw HL7 message to LIMS
-   local okRaw, errRaw = pcall(function()
-      local typeName = config_loader.getDataTypeName("raw")
-      api_client.sendHL7RawMessage(eventId, cleaned, messageType, "gGastro", typeName)
+   -- Send primary table using config-defined data_type_name (e.g., "eRequest:eRequest")
+   local okMain, resMain = pcall(function()
+      return api_client.sendToLims(mapped.eRequest, data_type_name)
    end)
-   if not okRaw then
-      error_handler.log("Failed to post raw HL7 to LIMS", { eventId = eventId, error = errRaw }, "warning")
-   end
 
-   -- Step 6: Submit structured data to LIMS API
-   local response = api_client.sendToLims(mapped)
-   if not response or not response.status then
-      error_handler.log("LIMS API returned no status", { response = response, mapped = mapped }, "error")
-      error("LIMS API submission failed: No status returned")
-   end
-
-   -- Step 7: Success or retry
-   if response.status >= 300 then
-      retry_processor.enqueue(mapped, "Initial LIMS submission failed")
-      audit_log.retry("LIMS submission failed", { status = response.status })
+   if not okMain or not resMain or not resMain.status then
+      retry_processor.handleRetry(mapped.eRequest, "Failed primary table submission", config, 1)
+      iguana.logError("Primary table submission failed")
+   elseif resMain.status >= 300 then
+      retry_processor.handleRetry(mapped.eRequest, "Primary table submission status " .. resMain.status, config, 1)
+      iguana.logWarning("Primary table HTTP status: " .. resMain.status)
    else
-      audit_log.success("LIMS submission succeeded", {
-         status = response.status,
-         patient = (mapped.PatientFirstName or "") .. " " .. (mapped.PatientLastName or "")
-      })
+      iguana.logInfo("Primary table submission succeeded")
+   end
+
+   -- Define and send supporting tables using full dataTypeName format
+   local supportingTables = {
+      ["Patient:Patient"]      = mapped.Patient,
+      ["Physician:Physician"]  = mapped.Physician,
+      ["Organization:Org"]     = mapped.Organization,
+      ["HL7Datum:HL7Datum"]    = mapped.HL7Datum
+   }
+
+   local okTables, resTables = pcall(function()
+      return api_client.sendSupportingTables(supportingTables)
+   end)
+
+   if not okTables or not resTables or not resTables.status then
+      iguana.logWarning("Supporting tables submission failed")
+   elseif resTables.status >= 300 then
+      iguana.logWarning("Supporting tables HTTP status: " .. resTables.status)
+   else
+      iguana.logInfo("Supporting table data submitted successfully")
+      queue_writer.pushToQueue(mapped)
    end
 
    return cleaned
 end
 
 -- ============================================================================
--- Function: main
--- Purpose : Iguana From LLP channel entry point
--- Input   : Data - Raw HL7 string from channel
+-- main
+-- Entry point for HL7 message processing
 -- ============================================================================
 function main(Data)
    local ok, err = pcall(function()
       processMessage(Data)
    end)
 
-   if ok then
-      iguana.logInfo("HL7 message processed and posted successfully.")
+   if not ok then
+      iguana.logError("Message processing failed with error: " .. tostring(err))
+      iguana.logError("Raw HL7: " .. Data)
    else
-      iguana.logError("Message processing failed", { raw = Data, error = err }, "error")
-      iguana.logError("Processing failed: " .. tostring(err))
+      iguana.logInfo("HL7 message processed successfully.")
    end
 end

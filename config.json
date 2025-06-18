@@ -1,8 +1,8 @@
 {
     "fields": [
         {
-            "default": "https://newstage.clabsportal.com:8020/webservice/api/datarecordlist/fields/eRequest",
-            "name": "lims_url",
+            "default": "https://newstage.clabsportal.com:8020/webservice/api/datarecordlist/fields",
+            "name": "lims_table_url",
             "options": "",
             "type": "String"
         },
@@ -25,9 +25,9 @@
             "type": "Number"
         },
         {
-            "default": "raw:HL7RawMessage",
+            "default": "eRequest",
             "name": "data_type_name",
-            "options": "raw:HL7RawMessage, erequest:eRequest, attachment:attachment",
+            "options": "eRequest, Physician, Patient, HL7Datum, Organization",
             "type": "List"
         }
     ]

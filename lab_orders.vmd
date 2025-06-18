@@ -547,7 +547,7 @@
   "children":[
    {"type":"MSH", "desc":"" ,"req":true},
    {"type":"PID", "desc":"" ,"req":true},
-   {"type":"PV1", "desc":""},
+   {"type":"PV1", "desc":"" ,"req":true},
    {"type":"IN1", "desc":"" ,"repeats":true},
    {"type":"GT1", "desc":""},
    {"type":"DG1", "desc":"" ,"repeats":true},

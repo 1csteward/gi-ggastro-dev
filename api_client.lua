@@ -2,105 +2,146 @@
 -- api_client.lua
 -- Author: Conor Steward
 -- Date Created: 5/2/25
--- Last Edit: 6/12/25
+-- Last Edit: 6/18/25
 --
 -- Purpose:
---   Encapsulates HTTP POST logic for sending data to the LIMS API.
---   Supports Basic Auth and configurable object types via data_type_name.
+--   Encapsulates HTTP POST logic for sending mapped HL7 data to the LIMS API.
+--   - Dynamically posts eRequest and supporting table data to proper endpoints.
+--   - Handles full "table:type" config values for routing and payload structure.
+--   - Guards against nil HTTP response codes.
 --
 -- Dependencies:
---   - config_loader.lua (for credentials and type mappings)
+--   - config_loader.lua (for credentials and endpoint URLs)
 -- ====================================================================
 
 local config_loader = require "config_loader"
-local config = config_loader.load({ "lims_url", "basic_auth", "timeout", "data_type_name" })
+local config = config_loader.load({
+   "lims_table_url",
+   "basic_auth",
+   "timeout",
+   "data_type_name"
+})
 
 local api_client = {}
 
 -- ============================================================================
 -- Function: sendToLims
--- Purpose : Sends mapped HL7 fields to the LIMS eRequest API
--- Input   : data (table) - Mapped HL7 data
--- Output  : table - {status, body, error}
+-- Purpose : Sends a primary record (e.g., eRequest) to the LIMS table endpoint
+-- Input   : payload (table)    - The mapped HL7 data for the main record
+--           tableName (string) - Optional override for data_type_name
+-- Output  : table              - Response { status, message }
 -- ============================================================================
-function api_client.sendToLims(data)
-   local url = config.lims_url
-   local auth = config.basic_auth
+function api_client.sendToLims(payload, tableName)
+   local limsUrlBase = config.lims_table_url:gsub("/+$", "")
+   local authHeader = "Basic " .. config.basic_auth
    local timeout = tonumber(config.timeout or "10")
 
-   local headers = {
-      ["Authorization"] = auth,
-      ["Content-Type"] = "application/json",
-      ["Accept"] = "application/json"
-   }
+   local fullDataTypeName = tableName or config.data_type_name
+   local baseTableName = fullDataTypeName:match("^(.-):") or fullDataTypeName
+
+   local url = string.format("%s/%s", limsUrlBase, baseTableName)
 
    local success, response = pcall(function()
       return net.http.post{
          url     = url,
-         headers = headers,
-         body    = json.serialize{data = data},
+         headers = {
+            ["Authorization"] = authHeader,
+            ["Content-Type"]  = "application/json",
+            ["Accept"]        = "application/json"
+         },
+         body    = json.serialize{
+            data = {
+               dataTypeName = fullDataTypeName,
+               fields       = payload
+            }
+         },
          timeout = timeout
       }
    end)
 
    if not success then
-      iguana.logError("Failed to POST to LIMS API: " .. tostring(response))
-      return {
-         status = 500,
-         body = "Internal error posting to LIMS",
-         error = response
-      }
+      iguana.logError("Failed to POST to LIMS (" .. fullDataTypeName .. "): " .. tostring(response))
+      return { status = 500, message = "Internal error", error = response }
    end
 
-   if response.code >= 300 then
-      iguana.logWarning(string.format("LIMS API returned status %d: %s", response.code, response.body or "No body"))
+   if not response.code then
+      iguana.logError("No HTTP status code received from LIMS response for " .. baseTableName)
+      iguana.logError("Response object: " .. tostring(response))
+      return { status = 500, message = "No status code from LIMS", error = response }
+   elseif response.code >= 300 then
+      iguana.logWarning(string.format("LIMS POST to %s failed (%d): %s", baseTableName, response.code, response.body or "No body"))
    else
-      iguana.logInfo("Successfully posted to LIMS API")
+      iguana.logInfo("Successfully posted " .. baseTableName .. " to LIMS")
    end
 
-   return response
+   return {
+      status  = response.code,
+      message = response.body
+   }
 end
 
 -- ============================================================================
--- Function: sendHL7RawMessage
--- Purpose : Posts raw HL7 message to HL7RawMessage object in LIMS
--- Input   : eventId, rawMessage, messageType, source, typeName (string)
--- Output  : parsed LIMS response or nil
+-- Function: sendSupportingTables
+-- Purpose : Sends auxiliary tables (e.g., Patient, Physician) to LIMS
+-- Input   : tableMap (table) - Table of key=tableName, value=fields
+-- Output  : table            - Aggregate result { status, details }
 -- ============================================================================
-function api_client.sendHL7RawMessage(eventId, rawMessage, messageType, source, typeName)
-   local url = config.lims_url
-   local auth = config.basic_auth
+function api_client.sendSupportingTables(tableMap)
+   local limsUrlBase = config.lims_table_url:gsub("/+$", "")
+   local authHeader = config.basic_auth
    local timeout = tonumber(config.timeout or "10")
 
-   local body = {
-      dataTypeName = typeName,
-      fields = {
-         EventID     = eventId,
-         RawMessage  = rawMessage,
-         Source      = source or "IguanaX",
-         MessageType = messageType or "UNKNOWN",
-         Timestamp   = os.time() * 1000
-      }
-   }
+   local result = {}
+   local allSucceeded = true
 
-   local headers = {
-      ["Content-Type"] = "application/json",
-      ["Authorization"] = auth
-   }
+   for tableName, fields in pairs(tableMap) do
+      if fields then
+         local fullDataTypeName = tableName
+         local baseTableName = tableName:match("^(.-):") or tableName
+         local url = string.format("%s/%s", limsUrlBase, baseTableName)
 
-   local result, code, respHeaders, status = net.http.post{
-      url     = url .. "/datarecord",
-      headers = headers,
-      body    = json.serialize(body),
-      timeout = timeout
-   }
+         local success, response = pcall(function()
+            return net.http.post{
+               url     = url,
+               headers = {
+                  ["Authorization"] = authHeader,
+                  ["Content-Type"]  = "application/json",
+                  ["Accept"]        = "application/json"
+               },
+               body    = json.serialize{
+                  data = {
+                     dataTypeName = fullDataTypeName,
+                     fields       = fields
+                  }
+               },
+               timeout = timeout
+            }
+         end)
 
-   if code ~= 200 then
-      iguana.logError("Failed to send HL7RawMessage: " .. tostring(result))
-      return nil
+         if not success then
+            result[baseTableName] = { status = 500, message = "Internal error", error = response }
+            iguana.logError("Failed to POST to LIMS (" .. fullDataTypeName .. "): " .. tostring(response))
+            allSucceeded = false
+         elseif not response.code then
+            result[baseTableName] = { status = 500, message = "No status code", error = response }
+            iguana.logError("No HTTP status code received for table " .. baseTableName)
+            iguana.logError("Response object: " .. tostring(response))
+            allSucceeded = false
+         elseif response.code >= 300 then
+            result[baseTableName] = { status = response.code, message = response.body or "No body" }
+            iguana.logWarning("POST to LIMS (" .. fullDataTypeName .. ") failed: " .. response.code)
+            allSucceeded = false
+         else
+            result[baseTableName] = { status = response.code, message = response.body }
+            iguana.logInfo("Successfully posted " .. baseTableName .. " to LIMS")
+         end
+      end
    end
 
-   return json.parse{data = result}
+   return {
+      status  = allSucceeded and 200 or 500,
+      details = result
+   }
 end
 
 return api_client
